@@ -52,8 +52,8 @@ async function start() {
 		return
 	}
 
-	splitedText[0] = `function sandbox(){${splitedText[0]};return [${MAINFUNCTION}, ${MAINARRAY}]};sandbox()`
-	const [MAINFUNCTIONEVAL, MAINARRAYEVAL] = eval(splitedText[0])
+	const sandboxCode = `function sandbox(){${splitedText[0]};return [${MAINFUNCTION}, ${MAINARRAY}]};sandbox()`
+	const [MAINFUNCTIONEVAL, MAINARRAYEVAL] = eval(sandboxCode)
 
 	let scopeStack = []
 	let globalScope = {}
@@ -292,13 +292,12 @@ async function start() {
 		}
 	})
 
+	// FROM: var a = stringGetterFunctionName(10)
+	// TO: var a = "real string value"
 	scopeStack = []
 	globalScope = {}
-
-	// FROM: var a = 12; MAINARRAY[a]; var b = []; b[7] = 2; MAINARRAY[b[7]]; var c; c = 13; MAINARRAY[c]
-	// TO: var a = 12; MAINARRAY[12]; var b = []; 2 = 2; MAINARRAY[2]; var c; 13 = 13; MAINARRAY[13]
 	estraverse.replace(ast, {
-		enter(node, parent) {
+		enter(node) {
 			if (node.type === "FunctionDeclaration" || node.type === "FunctionExpression") {
 				scopeStack.push({})
 			}
@@ -321,48 +320,125 @@ async function start() {
 				}
 			}
 
-			if (node.type === "Identifier" && parent.type !== "VariableDeclarator") {
-				const result = resolveVariable(node.name)
-				if (result !== null && result.toString() !== "NaN" && typeof result === "number") {
-					if (result >= 0) {
-						return {
-							type: "Literal",
-							value: result,
-							raw: String(result)
-						}
-					} else {
-						return {
-							type: "UnaryExpression",
-							operator: "-",
-							prefix: true,
-							argument: {
+			if (node.type === "CallExpression") {
+				if (
+					node.callee.type === "MemberExpression" &&
+					node.callee.object.type === "Identifier" &&
+					node.callee.object.name === MAINFUNCTION &&
+					node.callee.property.type === "Identifier"
+				) {
+					if (stringGetterFunctionNames.includes(node.callee.property.name)) {
+						if (node.arguments[0].type === "Literal") {
+							const result = MAINFUNCTIONEVAL[stringGetterFunctionNames[0]](node.arguments[0].value)
+							return {
 								type: "Literal",
-								value: Math.abs(result),
-								raw: String(Math.abs(result))
+								value: result
+							}
+						} else if (node.arguments[0].type === "Identifier") {
+							const resolved = resolveVariable(node.arguments[0].name)
+							if (resolved !== null && resolved.toString() !== "NaN" && typeof resolved === "number") {
+								if (resolved >= 0) {
+									const result = MAINFUNCTIONEVAL[stringGetterFunctionNames[0]](resolved)
+									return {
+										type: "Literal",
+										value: result
+									}
+								}
+							}
+						} else if (
+							node.arguments[0].type === "MemberExpression" &&
+							node.arguments[0].object.type === "Identifier" &&
+							node.arguments[0].property.type === "Literal"
+						) {
+							const resolved = resolveVariable(`${node.arguments[0].object.name}[${node.arguments[0].property.value}]`)
+							if (resolved !== null && resolved.toString() !== "NaN" && typeof resolved === "number") {
+								if (resolved >= 0) {
+									const result = MAINFUNCTIONEVAL[stringGetterFunctionNames[0]](resolved)
+									return {
+										type: "Literal",
+										value: result
+									}
+								}
 							}
 						}
 					}
 				}
 			}
+		},
 
-			if (node.type === "MemberExpression") {
-				const result = resolveVariable(`${node.object.name}[${node.property.value || node.property.name}]`)
-				if (result !== null && result.toString() !== "NaN" && typeof result === "number") {
-					if (result >= 0) {
-						return {
-							type: "Literal",
-							value: result,
-							raw: String(result)
-						}
+		leave(node) {
+			if (node.type === "FunctionDeclaration" || node.type === "FunctionExpression") {
+				scopeStack.pop()
+			}
+		}
+	})
+
+	// FROM: var a = MAINARRAY[10]
+	// TO: var a = "real string value"
+	scopeStack = []
+	globalScope = {}
+	estraverse.replace(ast, {
+		enter(node) {
+			if (node.type === "FunctionDeclaration" || node.type === "FunctionExpression") {
+				scopeStack.push({})
+			}
+
+			if (node.type === "VariableDeclarator") {
+				const currentScope = scopeStack[scopeStack.length - 1] || globalScope
+				if (node.init && node.init.type === "Literal") {
+					currentScope[node.id.name] = node.init.value
+				}
+			}
+
+			if (node.type === "AssignmentExpression") {
+				const currentScope = scopeStack[scopeStack.length - 1] || globalScope
+				if (node.right.type === "Literal") {
+					if (node.left.type === "Identifier") {
+						currentScope[node.left.name] = node.right.value
+					} else if (node.left.type === "MemberExpression" && node.left.object.type === "Identifier" && node.left.property.type === "Literal") {
+						currentScope[`${node.left.object.name}[${node.left.property.value}]`] = node.right.value
+					}
+				}
+			}
+
+			if (node.type === "MemberExpression" && node.object.type === "Identifier" && node.object.name === MAINARRAY) {
+				if (node.property.type === "Literal") {
+					const result = MAINARRAYEVAL[node.property.value]
+					if (result == null) {
+						// null main array
 					} else {
 						return {
-							type: "UnaryExpression",
-							operator: "-",
-							prefix: true,
-							argument: {
-								type: "Literal",
-								value: Math.abs(result),
-								raw: String(Math.abs(result))
+							type: "Literal",
+							value: result
+						}
+					}
+				} else if (node.property.type === "Identifier") {
+					const resolved = resolveVariable(node.property.name)
+					if (resolved !== null && resolved.toString() !== "NaN" && typeof resolved === "number") {
+						if (resolved >= 0) {
+							const result = MAINARRAYEVAL[resolved]
+							if (result == null) {
+								// null main array
+							} else {
+								return {
+									type: "Literal",
+									value: result
+								}
+							}
+						}
+					}
+				} else if (node.property.type === "MemberExpression" && node.property.object.type === "Identifier" && node.property.property.type === "Literal") {
+					const resolved = resolveVariable(`${node.property.object.name}[${node.property.property.value}]`)
+					if (resolved !== null && resolved.toString() !== "NaN" && typeof resolved === "number") {
+						if (resolved >= 0) {
+							const result = MAINARRAYEVAL[resolved]
+							if (result == null) {
+								// null main array
+							} else {
+								return {
+									type: "Literal",
+									value: result
+								}
 							}
 						}
 					}
@@ -393,59 +469,11 @@ async function start() {
 		}
 	})
 
-	// FROM: var a = stringGetterFunctionName(10)
-	// TO: var a = "real string value"
-	estraverse.replace(ast, {
-		enter(node) {
-			if (node.type === "CallExpression") {
-				if (
-					node.callee.type === "MemberExpression" &&
-					node.callee.object.type === "Identifier" &&
-					node.callee.object.name === MAINFUNCTION &&
-					node.callee.property.type === "Identifier"
-				) {
-					if (stringGetterFunctionNames.includes(node.callee.property.name)) {
-						if (node.arguments[0].type !== "Literal") {
-							// console.log(node.arguments[0].type)
-						} else {
-							const result = MAINFUNCTIONEVAL[stringGetterFunctionNames[0]](node.arguments[0].value)
-							return {
-								type: "Literal",
-								value: result
-							}
-						}
-					}
-				}
-			}
-		}
-	})
-
-	// FROM: var a = MAINARRAY[10]
-	// TO: var a = "real string value"
-	estraverse.replace(ast, {
-		enter(node) {
-			if (node.type === "MemberExpression" && node.object.type === "Identifier" && node.object.name === MAINARRAY) {
-				if (node.property.type !== "Literal") {
-					console.log(node.property.type)
-				} else {
-					const result = MAINARRAYEVAL[node.property.value]
-					if (result == null) {
-						// null main array, i also dk why
-					} else {
-						return {
-							type: "Literal",
-							value: result
-						}
-					}
-				}
-			}
-		}
-	})
-
 	// Generate updated code
 	const updatedCode = escodegen.generate(ast)
+	const updatedCodeSplit = updatedCode.split("requirejs")
 	try {
-		fs.writeFileSync("output.js", updatedCode)
+		fs.writeFileSync("output.js", splitedText[0] + "requirejs" + updatedCodeSplit[1])
 	} catch (error) {
 		console.error(error)
 	}
