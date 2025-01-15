@@ -261,8 +261,8 @@ async function start() {
 				if (node.right.type === "Identifier") {
 					if (node.left.type === "Identifier") {
 						currentScope[node.left.name] = node.right.name
-					} else if (node.left.type === "MemberExpression") {
-						currentScope[`${node.left.object.name}[${node.left.property.value || node.left.property.name}]`] = node.right.name
+					} else if (node.left.type === "MemberExpression" && node.left.object.type === "Identifier" && node.left.property.type === "Literal") {
+						currentScope[`${node.left.object.name}[${node.left.property.value}]`] = node.right.name
 					}
 				}
 			}
@@ -315,8 +315,8 @@ async function start() {
 				if (node.right.type === "Literal") {
 					if (node.left.type === "Identifier") {
 						currentScope[node.left.name] = node.right.value
-					} else if (node.left.type === "MemberExpression") {
-						currentScope[`${node.left.object.name}[${node.left.property.value || node.left.property.name}]`] = node.right.value
+					} else if (node.left.type === "MemberExpression" && node.left.object.type === "Identifier" && node.left.property.type === "Literal") {
+						currentScope[`${node.left.object.name}[${node.left.property.value}]`] = node.right.value
 					}
 				}
 			}
@@ -406,7 +406,7 @@ async function start() {
 				) {
 					if (stringGetterFunctionNames.includes(node.callee.property.name)) {
 						if (node.arguments[0].type !== "Literal") {
-							console.log("not literal")
+							// console.log(node.arguments[0].type)
 						} else {
 							const result = MAINFUNCTIONEVAL[stringGetterFunctionNames[0]](node.arguments[0].value)
 							return {
@@ -426,7 +426,7 @@ async function start() {
 		enter(node) {
 			if (node.type === "MemberExpression" && node.object.type === "Identifier" && node.object.name === MAINARRAY) {
 				if (node.property.type !== "Literal") {
-					console.log("not literal")
+					console.log(node.property.type)
 				} else {
 					const result = MAINARRAYEVAL[node.property.value]
 					if (result == null) {
